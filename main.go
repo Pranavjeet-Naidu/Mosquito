@@ -1,16 +1,11 @@
+/*
+Copyright © 2025 NAME HERE <EMAIL ADDRESS>
+
+*/
 package main
 
-import (
-    "Mosquito/broker"
-    "Mosquito/config"
-    "log"
-)
+import "github.com/Pranavjeet-Naidu/Mosquito/cmd"
 
 func main() {
-    cfg, err := config.Load()
-    if err != nil {
-        log.Fatalf("Failed to load configuration: %v", err)
-    }
-    
-    broker.StartBroker(cfg)
+	cmd.Execute()
 }
