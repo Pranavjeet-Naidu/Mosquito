@@ -38,6 +38,28 @@ func EncodeMessage(img image.Image, msg []byte, mode StegMode) (image.Image, err
     return EncodeMessageWithPassword(img, msg, "", mode, false)
 }
 
+func IsStegImage(img image.Image) bool {
+    // Try all modes for header detection
+    for _, mode := range []StegMode{LSB1, LSB3, LSB4, LSB8} {
+        var headerData []byte
+        switch mode {
+        case LSB1:
+            headerData = decodeLSB1(img, 8, 0)
+        case LSB3:
+            headerData = decodeLSB3(img, 8, 0)
+        case LSB4:
+            headerData = decodeLSB4(img, 8, 0)
+        case LSB8:
+            headerData = decodeLSB8(img, 8, 0)
+        }
+        
+        if len(headerData) >= 8 && headerData[0] == MagicByte {
+            return true
+        }
+    }
+    return false
+}
+
 // EncodeMessageWithPassword embeds an encrypted message into an image
 func EncodeMessageWithPassword(img image.Image, msg []byte, password string, mode StegMode, isImage bool) (image.Image, error) {
     bounds := img.Bounds()
@@ -56,8 +78,55 @@ func EncodeMessageWithPassword(img image.Image, msg []byte, password string, mod
             out.Set(x, y, color.RGBA{uint8(r >> 8), uint8(g >> 8), uint8(b >> 8), uint8(a >> 8)})
         }
     }
+    
+    // Set up the header
+    header := Header{
+        Magic:     MagicByte,
+        Version:   Version,
+        Mode:      mode,
+        Flags:     0,
+        PayloadLen: uint32(len(msg)),
+    }
+    
+    // Set image flag if payload is an image
+    if isImage {
+        header.Flags |= FlagImage
+    }
+    
+    // Encrypt the payload if a password is provided
+    finalMsg := msg
+    if password != "" {
+        encryptedMsg, err := encrypt(msg, password)
+        if err != nil {
+            return nil, err
+        }
+        finalMsg = encryptedMsg
+        header.Flags |= FlagEncrypted
+        header.PayloadLen = uint32(len(encryptedMsg))
+    }
+    
+    // Encode the header and payload
+    headerData := MarshalHeader(header)
+    data := append(headerData, finalMsg...)
+    
+    // Encode the data using the specified mode
+    switch mode {
+    case LSB1:
+        encodeLSB1(out, data)
+    case LSB3:
+        encodeLSB3(out, data)
+    case LSB4:
+        encodeLSB4(out, data)
+    case LSB8:
+        encodeLSB8(out, data)
+    default:
+        return nil, ErrUnsupportedMode
+    }
+    
     return out, nil
 }
+
+
 
 // DecodeMessage extracts a message from an image
 func DecodeMessage(img image.Image) ([]byte, error) {
@@ -65,33 +134,38 @@ func DecodeMessage(img image.Image) ([]byte, error) {
 }
 
 // DecodeMessageWithPassword extracts and decrypts a message from an image
+// DecodeMessageWithPassword extracts and decrypts a message from an image
 func DecodeMessageWithPassword(img image.Image, password string) ([]byte, error) {
-    // Extract bits from the first few pixels to get the header
-    headerData := make([]byte, 8)
+    // Try to extract the header using all possible modes
+    var header Header
+    // var err error
+    var headerFound bool
     
-    bounds := img.Bounds()
-    bitIndex := 0
-    
-    // Extract header using LSB1 (always extract header with LSB1 regardless of mode)
-    for y := bounds.Min.Y; y < bounds.Max.Y && bitIndex < 8*8; y++ {
-        for x := bounds.Min.X; x < bounds.Max.X && bitIndex < 8*8; x++ {
-            r, _, _, _ := img.At(x, y).RGBA()
-            bit := byte(r & 1)
-            
-            byteIndex := bitIndex / 8
-            bitPos := 7 - (bitIndex % 8)
-            
-            // Set the bit in the header byte
-            headerData[byteIndex] |= bit << bitPos
-            
-            bitIndex++
+    for _, mode := range []StegMode{LSB1, LSB3, LSB4, LSB8} {
+        var headerData []byte
+        switch mode {
+        case LSB1:
+            headerData = decodeLSB1(img, 8, 0)
+        case LSB3:
+            headerData = decodeLSB3(img, 8, 0)
+        case LSB4:
+            headerData = decodeLSB4(img, 8, 0)
+        case LSB8:
+            headerData = decodeLSB8(img, 8, 0)
+        }
+        
+        if len(headerData) >= 8 && headerData[0] == MagicByte {
+            tmpHeader, tmpErr := UnmarshalHeader(headerData)
+            if tmpErr == nil {
+                header = tmpHeader
+                headerFound = true
+                break
+            }
         }
     }
     
-    // Parse the header
-    header, err := UnmarshalHeader(headerData)
-    if err != nil {
-        return nil, err
+    if !headerFound {
+        return nil, ErrInvalidHeader
     }
     
     // Extract data based on the mode in the header
@@ -124,28 +198,32 @@ func DecodeMessageWithPassword(img image.Image, password string) ([]byte, error)
     
     return data, nil
 }
-
-// IsStegImage checks if an image contains steganographic data
-func IsStegImage(img image.Image) bool {
-    headerData := decodeLSB1(img, 8, 0)
-    if len(headerData) < 8 {
-        return false
-    }
-    
-    // Check for magic byte
-    return headerData[0] == MagicByte
-}
-
 // GetImageInfo extracts information about a steganographic image
 func GetImageInfo(img image.Image) (Header, error) {
-    headerData := decodeLSB1(img, 8, 0)
-    if len(headerData) < 8 {
-        return Header{}, ErrInvalidHeader
+    // Try all modes for header detection
+    for _, mode := range []StegMode{LSB1, LSB3, LSB4, LSB8} {
+        var headerData []byte
+        switch mode {
+        case LSB1:
+            headerData = decodeLSB1(img, 8, 0)
+        case LSB3:
+            headerData = decodeLSB3(img, 8, 0)
+        case LSB4:
+            headerData = decodeLSB4(img, 8, 0)
+        case LSB8:
+            headerData = decodeLSB8(img, 8, 0)
+        }
+        
+        if len(headerData) >= 8 && headerData[0] == MagicByte {
+            header, err := UnmarshalHeader(headerData)
+            if err == nil {
+                return header, nil
+            }
+        }
     }
     
-    return UnmarshalHeader(headerData)
+    return Header{}, ErrInvalidHeader
 }
-
 // ========================= LSB Encoding Functions =========================
 
 // encodeLSB1 embeds data using LSB of the red channel only
@@ -279,7 +357,8 @@ func decodeLSB1(img image.Image, dataSize int, offset int) []byte {
             }
             
             r, _, _, _ := img.At(x, y).RGBA()
-            bit := byte(r & 1)
+            // Fix: add shift to extract the correct bit
+            bit := byte((r >> 8) & 1)
             
             outIndex := (bitIndex - skipBits) / 8
             bitPos := 7 - ((bitIndex - skipBits) % 8)
@@ -302,20 +381,24 @@ func decodeLSB3(img image.Image, dataSize int, offset int) []byte {
     
     // Skip offset bits
     skipBits := offset * 8
+    totalSkipAndData := skipBits + totalBits
     
-    for y := bounds.Min.Y; y < bounds.Max.Y && (bitIndex-skipBits) < totalBits; y++ {
-        for x := bounds.Min.X; x < bounds.Max.X && (bitIndex-skipBits) < totalBits; x++ {
+    for y := bounds.Min.Y; y < bounds.Max.Y && bitIndex < totalSkipAndData; y++ {
+        for x := bounds.Min.X; x < bounds.Max.X && bitIndex < totalSkipAndData; x++ {
             r, g, b, _ := img.At(x, y).RGBA()
             channels := []uint32{r, g, b}
             
-            for c := 0; c < 3 && (bitIndex-skipBits) < totalBits; c++ {
+            for c := 0; c < 3 && bitIndex < totalSkipAndData; c++ {
+                // Skip bits according to offset
                 if bitIndex < skipBits {
                     bitIndex++
                     continue
                 }
                 
-                bit := byte(channels[c] & 1)
+                // Extract bit from the channel's LSB
+                bit := byte((channels[c] >> 8) & 1)
                 
+                // Place the bit in the output byte
                 outIndex := (bitIndex - skipBits) / 8
                 bitPos := 7 - ((bitIndex - skipBits) % 8)
                 
@@ -350,7 +433,8 @@ func decodeLSB4(img image.Image, dataSize int, offset int) []byte {
                     continue
                 }
                 
-                bit := byte((r >> i) & 1)
+                // Fix: Add shift for proper bit extraction
+                bit := byte((r >> (8 + i)) & 1)
                 
                 outIndex := (bitIndex - skipBits) / 8
                 bitPos := 7 - ((bitIndex - skipBits) % 8)
@@ -367,7 +451,8 @@ func decodeLSB4(img image.Image, dataSize int, offset int) []byte {
                     continue
                 }
                 
-                bit := byte((g >> i) & 1)
+                // Fix: Add shift for proper bit extraction
+                bit := byte((g >> (8 + i)) & 1)
                 
                 outIndex := (bitIndex - skipBits) / 8
                 bitPos := 7 - ((bitIndex - skipBits) % 8)
@@ -404,7 +489,8 @@ func decodeLSB8(img image.Image, dataSize int, offset int) []byte {
                         continue
                     }
                     
-                    bit := byte((channels[c] >> i) & 1)
+                    // Fix: Add shift for proper bit extraction
+                    bit := byte((channels[c] >> (8 + i)) & 1)
                     
                     outIndex := (bitIndex - skipBits) / 8
                     bitPos := 7 - ((bitIndex - skipBits) % 8)
@@ -482,7 +568,6 @@ func decrypt(data []byte, password string) ([]byte, error) {
     
     return plaintext, nil
 }
-
 
 // Public versions of the encoding/decoding functions
 

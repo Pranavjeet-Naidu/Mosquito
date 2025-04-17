@@ -3,7 +3,7 @@ package steg
 import (
     "image"
     "image/color"
-    "image/draw"
+    "fmt"
     "os"
     "path/filepath"
     "strings"
@@ -19,6 +19,11 @@ import (
 
 // LoadImage loads an image from a file
 func LoadImage(path string) (image.Image, error) {
+    // Check if the file exists first
+    if _, err := os.Stat(path); os.IsNotExist(err) {
+        return nil, fmt.Errorf("image file not found: %s", path)
+    }
+    
     f, err := os.Open(path)
     if err != nil {
         return nil, err
@@ -28,14 +33,6 @@ func LoadImage(path string) (image.Image, error) {
     img, _, err := image.Decode(f)
     if err != nil {
         return nil, err
-    }
-    
-    // Convert to RGBA if it's not already
-    if _, ok := img.(*image.RGBA); !ok {
-        bounds := img.Bounds()
-        rgba := image.NewRGBA(bounds)
-        draw.Draw(rgba, bounds, img, bounds.Min, draw.Src)
-        return rgba, nil
     }
     
     return img, nil
