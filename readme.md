@@ -16,7 +16,7 @@ Mosquito is a powerful steganography tool with MQTT support, allowing you to hid
   - Password-based protection
   - Image difference analysis to assess stealth
 
-- **MQTT **
+- **MQTT**
   - Send steganographic images via MQTT
   - Receive and automatically save incoming steganographic images
   - Secure communication channels
